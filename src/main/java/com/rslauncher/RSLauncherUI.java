@@ -1,20 +1,22 @@
 package com.rslauncher;
 
+import java.awt.Desktop;
+import java.awt.FlowLayout;
+import java.awt.event.WindowAdapter;
+import java.awt.event.WindowEvent;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
+import java.net.Socket;
+import java.net.URI;
+import java.nio.file.Paths;
 import java.util.Properties;
 
 import javax.swing.JButton;
 import javax.swing.JFrame;
-import javax.swing.JLabel;
 import javax.swing.JOptionPane;
 import javax.swing.JTextArea;
 import javax.swing.SwingUtilities;
-import java.awt.FlowLayout;
-import java.awt.Label;
-import java.awt.event.WindowAdapter;
-import java.awt.event.WindowEvent;
 
 public class RSLauncherUI extends JFrame {
     private JTextArea statusLabel;
@@ -25,6 +27,8 @@ public class RSLauncherUI extends JFrame {
     private Process mysqlProcess;
     private boolean isWindows;
 
+    private boolean isRunning = ProcessKiller.isAppRunning();
+
     public RSLauncherUI() {
         setTitle("RSSECURITY Launcher");
         setSize(400, 200);
@@ -33,7 +37,13 @@ public class RSLauncherUI extends JFrame {
 
         startButton = new JButton("Iniciar sistema");
         stopButton = new JButton("Parar sistema");
-        stopButton.setEnabled(false);
+
+        if (isRunning) {
+            startButton.setEnabled(false);
+        } else {
+            stopButton.setEnabled(false);
+        }
+
         statusLabel = new JTextArea(" ");
 
         startButton.addActionListener(e -> {
@@ -68,6 +78,9 @@ public class RSLauncherUI extends JFrame {
     }
 
     private void startSystem() {
+        if (isRunning) {
+            ProcessKiller.killAppIfRunning();
+        }
         try {
             startButton.setEnabled(false);
             stopButton.setEnabled(false);
@@ -77,46 +90,49 @@ public class RSLauncherUI extends JFrame {
 
             logStatus("Tentando inicializar banco de dados...");
             if (os.contains("win")) {
-                mysqlProcess = new ProcessBuilder("cmd", "/c", "start", "C:\\xampp\\mysql_start.bat").start();
+                mysqlProcess = new ProcessBuilder("C:\\xampp\\mysql\\bin\\mysqld.exe", "--defaults-file=C:\\xampp\\mysql\\bin\\my.ini")
+                        .redirectOutput(ProcessBuilder.Redirect.DISCARD)
+                        .redirectError(ProcessBuilder.Redirect.DISCARD)
+                        .start();
                 isWindows = true;
             } else {
                 mysqlProcess = new ProcessBuilder("bash", "-c", "/opt/lampp/lampp startmysql").start();
-                int exitCode = mysqlProcess.waitFor();
-                if (exitCode != 0) {
-                    String error = "Erro ao iniciar MySQL. Tente executar manualmente:\nsudo /opt/lampp/lampp startmysql";
-                    logStatus(error);
-                    JOptionPane.showMessageDialog(null, error, "Erro", JOptionPane.ERROR_MESSAGE);
-                }
                 isWindows = false;
             }
 
             Thread.sleep(3000);
 
             // Inicia aplicação
-            File jar = new File("app/rssecurity.jar");
-            File properties = new File("app/application.properties");
+            String appDir = Paths.get("app").toAbsolutePath().toString();
+            File jar = new File(appDir + "/rssecurity.jar");
+            File properties = new File(appDir + "/application.properties");
 
             logStatus("Inicializando a aplicação...");
+            logStatus("App config: " + properties.getAbsolutePath());
 
             appProcess = new ProcessBuilder(
-                    "java", "-jar", jar.getAbsolutePath(),
-                    "--spring.config.location=file:" + properties.getAbsolutePath()).start();
+                    "javaw", "-jar", jar.getAbsolutePath(),
+                    "--spring.config.location=file:" + properties.getAbsolutePath())
+                    .redirectOutput(ProcessBuilder.Redirect.DISCARD)
+                    .redirectError(ProcessBuilder.Redirect.DISCARD)
+                    .start();
 
             Thread.sleep(7000);
 
             // Abre navegador
             String port = loadPort(properties);
             String url = "http://localhost:" + port;
+
             if (os.contains("win")) {
-                new ProcessBuilder("cmd", "/c", "start", url).start();
+                Desktop.getDesktop().browse(new URI(url));
             } else if (os.contains("mac")) {
                 new ProcessBuilder("open", url).start();
             } else {
                 new ProcessBuilder("xdg-open", url).start();
             }
 
-            logStatus("Sistema iniciado");
-            JOptionPane.showMessageDialog(this, "Sistema iniciado.");
+            logStatus("Sistema iniciado na porta " + port);
+            JOptionPane.showMessageDialog(this, "Sistema iniciado na porta " + port);
 
             startButton.setEnabled(false);
             stopButton.setEnabled(true);
@@ -125,6 +141,7 @@ public class RSLauncherUI extends JFrame {
             String error =  "Erro ao iniciar: " + ex.getMessage();
             logStatus(error);
             JOptionPane.showMessageDialog(this, error);
+            stopSystem();
         }
     }
 
@@ -136,7 +153,10 @@ public class RSLauncherUI extends JFrame {
             }
 
             if (isWindows) {
-                new ProcessBuilder("cmd", "/c", "C:\\xampp\\mysql_stop.bat").start();
+                new ProcessBuilder("cmd", "/c", "taskkill", "/F", "/IM", "mysqld.exe")
+                        .redirectOutput(ProcessBuilder.Redirect.DISCARD)
+                        .redirectError(ProcessBuilder.Redirect.DISCARD)
+                        .start();
             } else {
                 new ProcessBuilder("bash", "-c", "/opt/lampp/lampp stopmysql").start();
             }
