@@ -1,7 +1,10 @@
 package com.rslauncher;
 
+import java.awt.BorderLayout;
 import java.awt.Desktop;
+import java.awt.Dimension;
 import java.awt.FlowLayout;
+import java.awt.Font;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.io.File;
@@ -12,14 +15,17 @@ import java.net.URI;
 import java.nio.file.Paths;
 import java.util.Properties;
 
+import javax.swing.BorderFactory;
 import javax.swing.JButton;
 import javax.swing.JFrame;
 import javax.swing.JOptionPane;
+import javax.swing.JPanel;
+import javax.swing.JScrollPane;
 import javax.swing.JTextArea;
 import javax.swing.SwingUtilities;
 
 public class RSLauncherUI extends JFrame {
-    private JTextArea statusLabel;
+    private JTextArea statusArea;
     private JButton startButton;
     private JButton stopButton;
 
@@ -31,20 +37,20 @@ public class RSLauncherUI extends JFrame {
 
     public RSLauncherUI() {
         setTitle("RSSECURITY Launcher");
-        setSize(400, 200);
+        setSize(520, 320);
+        setResizable(false);
         setDefaultCloseOperation(EXIT_ON_CLOSE);
         setLocationRelativeTo(null);
 
-        startButton = new JButton("Iniciar sistema");
-        stopButton = new JButton("Parar sistema");
+        // ===== Botões =====
+        startButton = new JButton("▶ Iniciar sistema");
+        stopButton = new JButton("■ Parar sistema");
 
-        if (isRunning) {
-            startButton.setEnabled(false);
-        } else {
-            stopButton.setEnabled(false);
-        }
+        startButton.setPreferredSize(new Dimension(180, 40));
+        stopButton.setPreferredSize(new Dimension(180, 40));
 
-        statusLabel = new JTextArea(" ");
+        startButton.setEnabled(!isRunning);
+        stopButton.setEnabled(isRunning);
 
         startButton.addActionListener(e -> {
             logStatus("Inicializando sistema...");
@@ -56,12 +62,31 @@ public class RSLauncherUI extends JFrame {
             stopSystem();
         });
 
-        setLayout(new FlowLayout());
-        add(startButton);
-        add(stopButton);
-        add(statusLabel);
+        // ===== Painel de botões =====
+        JPanel buttonPanel = new JPanel();
+        buttonPanel.setLayout(new FlowLayout(FlowLayout.CENTER, 20, 10));
+        buttonPanel.add(startButton);
+        buttonPanel.add(stopButton);
 
-        // Fecha processos ao fechar a janela
+        // ===== Área de status =====
+        statusArea = new JTextArea();
+        statusArea.setEditable(false);
+        statusArea.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 13));
+        statusArea.setText("🛡 Bem-vindo ao RSSECURITY Launcher!\n");
+
+        JScrollPane scrollPane = new JScrollPane(statusArea);
+        scrollPane.setPreferredSize(new Dimension(480, 180));
+
+        // ===== Layout principal =====
+        JPanel mainPanel = new JPanel();
+        mainPanel.setLayout(new BorderLayout(10, 10));
+        mainPanel.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
+        mainPanel.add(buttonPanel, BorderLayout.NORTH);
+        mainPanel.add(scrollPane, BorderLayout.CENTER);
+
+        setContentPane(mainPanel);
+
+        // ===== Fecha processos ao fechar a janela =====
         addWindowListener(new WindowAdapter() {
             @Override
             public void windowClosing(WindowEvent e) {
@@ -74,7 +99,7 @@ public class RSLauncherUI extends JFrame {
 
     private void logStatus(String message) {
         System.out.println(message);
-        statusLabel.append(message + "\n");
+        statusArea.append(message + "\n");
     }
 
     private void startSystem() {
@@ -84,6 +109,9 @@ public class RSLauncherUI extends JFrame {
         try {
             startButton.setEnabled(false);
             stopButton.setEnabled(false);
+
+            String appDir = Paths.get("app").toAbsolutePath().toString();
+            File properties = new File(appDir + "/application.properties");
 
             String os = System.getProperty("os.name").toLowerCase();
             logStatus("Sistema detectado: " + os);
@@ -100,12 +128,11 @@ public class RSLauncherUI extends JFrame {
                 isWindows = false;
             }
 
-            Thread.sleep(3000);
+            Thread.sleep(2000);
 
             // Inicia aplicação
-            String appDir = Paths.get("app").toAbsolutePath().toString();
             File jar = new File(appDir + "/rssecurity.jar");
-            File properties = new File(appDir + "/application.properties");
+            String appPort = getProperty(properties, "server.port");
 
             logStatus("Inicializando a aplicação...");
             logStatus("App config: " + properties.getAbsolutePath());
@@ -117,11 +144,12 @@ public class RSLauncherUI extends JFrame {
                     .redirectError(ProcessBuilder.Redirect.DISCARD)
                     .start();
 
-            Thread.sleep(7000);
+            if (waitForAppStartup(Integer.parseInt(appPort), 30)) {
+                logStatus("Aplicação iniciada na porta " + appPort);
+            }
 
             // Abre navegador
-            String port = loadPort(properties);
-            String url = "http://localhost:" + port;
+            String url = "http://localhost:" + appPort;
 
             if (os.contains("win")) {
                 Desktop.getDesktop().browse(new URI(url));
@@ -131,8 +159,8 @@ public class RSLauncherUI extends JFrame {
                 new ProcessBuilder("xdg-open", url).start();
             }
 
-            logStatus("Sistema iniciado na porta " + port);
-            JOptionPane.showMessageDialog(this, "Sistema iniciado na porta " + port);
+            logStatus("Sistema iniciado na porta " + appPort);
+            JOptionPane.showMessageDialog(this, "Sistema iniciado na porta " + appPort);
 
             startButton.setEnabled(false);
             stopButton.setEnabled(true);
@@ -171,12 +199,28 @@ public class RSLauncherUI extends JFrame {
         }
     }
 
-    private String loadPort(File propFile) throws IOException {
+    private boolean waitForAppStartup(int port, int timeoutSeconds) {
+        long start = System.currentTimeMillis();
+        while ((System.currentTimeMillis() - start) < timeoutSeconds * 1000) {
+            try (Socket socket = new Socket("localhost", port)) {
+                return true;
+            } catch (IOException e) {
+                try {
+                    Thread.sleep(500);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+        }
+        return false;
+    }
+
+    private String getProperty(File propFile, String property) throws IOException {
         Properties props = new Properties();
         try (FileInputStream fis = new FileInputStream(propFile)) {
             props.load(fis);
         }
-        return props.getProperty("server.port", "8080");
+        return props.getProperty(property);
     }
 
     public static void main(String[] args) {
