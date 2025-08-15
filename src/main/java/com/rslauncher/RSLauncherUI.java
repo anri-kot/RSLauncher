@@ -5,6 +5,7 @@ import java.awt.Desktop;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
 import java.awt.Font;
+import java.awt.Image;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.io.File;
@@ -12,9 +13,11 @@ import java.io.FileInputStream;
 import java.io.IOException;
 import java.net.Socket;
 import java.net.URI;
+import java.net.URISyntaxException;
 import java.nio.file.Paths;
 import java.util.Properties;
 
+import javax.imageio.ImageIO;
 import javax.swing.BorderFactory;
 import javax.swing.JButton;
 import javax.swing.JFrame;
@@ -22,7 +25,6 @@ import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.JTextArea;
-import javax.swing.SwingUtilities;
 
 public class RSLauncherUI extends JFrame {
     private JTextArea statusArea;
@@ -34,9 +36,14 @@ public class RSLauncherUI extends JFrame {
     private boolean isWindows;
 
     private boolean isRunning = ProcessKiller.isAppRunning();
+    String os = System.getProperty("os.name").toLowerCase();
+    Image icon = loadIcon();
 
     public RSLauncherUI() {
         setTitle("RSSECURITY Launcher");
+        if (icon != null) {
+            setIconImage(icon);
+        }
         setSize(520, 320);
         setResizable(false);
         setDefaultCloseOperation(EXIT_ON_CLOSE);
@@ -49,8 +56,12 @@ public class RSLauncherUI extends JFrame {
         startButton.setPreferredSize(new Dimension(180, 40));
         stopButton.setPreferredSize(new Dimension(180, 40));
 
-        startButton.setEnabled(!isRunning);
         stopButton.setEnabled(isRunning);
+
+        if (isRunning) {
+            startButton.setText("Abrir janela");
+            stopButton.setEnabled(true);
+        }
 
         startButton.addActionListener(e -> {
             logStatus("Inicializando sistema...");
@@ -97,23 +108,39 @@ public class RSLauncherUI extends JFrame {
         });
     }
 
+    private Image loadIcon() {
+        try {
+            File file = new File("app/RSICON.png");
+            return ImageIO.read(file);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
     private void logStatus(String message) {
         System.out.println(message);
         statusArea.append(message + "\n");
     }
 
     private void startSystem() {
-        if (isRunning) {
-            ProcessKiller.killAppIfRunning();
-        }
+        isRunning = ProcessKiller.isAppRunning();
+        System.out.println(isRunning);
         try {
-            startButton.setEnabled(false);
-            stopButton.setEnabled(false);
-
             String appDir = Paths.get("app").toAbsolutePath().toString();
             File properties = new File(appDir + "/application.properties");
+            File jar = new File(appDir + "/rssecurity.jar");
+            String appPort = getProperty(properties, "server.port");
+            String url = "http://localhost:" + appPort;
 
-            String os = System.getProperty("os.name").toLowerCase();
+            if (isRunning) {
+                openInBrowser(url, os);
+                return;
+            } else {
+                RSLauncher.writePidFile();
+            }
+
+            stopButton.setEnabled(false);
+
             logStatus("Sistema detectado: " + os);
 
             logStatus("Tentando inicializar banco de dados...");
@@ -130,10 +157,6 @@ public class RSLauncherUI extends JFrame {
 
             Thread.sleep(2000);
 
-            // Inicia aplicação
-            File jar = new File(appDir + "/rssecurity.jar");
-            String appPort = getProperty(properties, "server.port");
-
             logStatus("Inicializando a aplicação...");
             logStatus("App config: " + properties.getAbsolutePath());
 
@@ -148,21 +171,11 @@ public class RSLauncherUI extends JFrame {
                 logStatus("Aplicação iniciada na porta " + appPort);
             }
 
-            // Abre navegador
-            String url = "http://localhost:" + appPort;
-
-            if (os.contains("win")) {
-                Desktop.getDesktop().browse(new URI(url));
-            } else if (os.contains("mac")) {
-                new ProcessBuilder("open", url).start();
-            } else {
-                new ProcessBuilder("xdg-open", url).start();
-            }
+            openInBrowser(url, os);
 
             logStatus("Sistema iniciado na porta " + appPort);
-            JOptionPane.showMessageDialog(this, "Sistema iniciado na porta " + appPort);
 
-            startButton.setEnabled(false);
+            startButton.setText("Abrir janela");
             stopButton.setEnabled(true);
         } catch (Exception ex) {
             ex.printStackTrace();
@@ -192,7 +205,6 @@ public class RSLauncherUI extends JFrame {
             logStatus("Sistema encerrado.");
             JOptionPane.showMessageDialog(this, "Sistema encerrado.");
 
-            startButton.setEnabled(true);
             stopButton.setEnabled(false);
         } catch (Exception e) {
             e.printStackTrace();
@@ -215,15 +227,21 @@ public class RSLauncherUI extends JFrame {
         return false;
     }
 
+    private void openInBrowser(String url, String os) throws IOException, URISyntaxException {
+        if (os.contains("win")) {
+            Desktop.getDesktop().browse(new URI(url));
+        } else if (os.contains("mac")) {
+            new ProcessBuilder("open", url).start();
+        } else {
+            new ProcessBuilder("xdg-open", url).start();
+        }
+    }
+
     private String getProperty(File propFile, String property) throws IOException {
         Properties props = new Properties();
         try (FileInputStream fis = new FileInputStream(propFile)) {
             props.load(fis);
         }
         return props.getProperty(property);
-    }
-
-    public static void main(String[] args) {
-        SwingUtilities.invokeLater(() -> new RSLauncherUI().setVisible(true));
     }
 }
